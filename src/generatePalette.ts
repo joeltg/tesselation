@@ -4,7 +4,7 @@ const hsluv = new Hsluv();
 
 export function generatePalette() {
   const baseHue = Math.floor(Math.random() * 360);
-  const baseLightness = 40;
+  const baseLightness = 30;
 
   const saturation = 30;
 

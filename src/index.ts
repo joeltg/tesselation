@@ -2,7 +2,7 @@ import REGL from "regl";
 
 import { generatePalette } from "./generatePalette.js";
 import { generateImage } from "./generateImage.js";
-import { generateGrid } from "./generateGrid.js";
+import { Grid } from "./generateGrid.js";
 
 const sourceSize = 240;
 const sourceWidth = sourceSize * devicePixelRatio;
@@ -18,16 +18,20 @@ source.style.height = sourceSize + "px";
 source.width = sourceWidth;
 source.height = sourceHeight;
 
-const ctx = source.getContext("2d");
-if (ctx === null) {
-  throw new Error("failed to get source drawing context");
+function generateRandomImage() {
+  const colorPalette = generatePalette();
+
+  const ctx = source.getContext("2d");
+  if (ctx === null) {
+    throw new Error("failed to get source drawing context");
+  }
+
+  generateImage(ctx, sourceSize * devicePixelRatio, colorPalette);
 }
 
-const colorPalette = generatePalette();
+generateRandomImage();
 
-generateImage(ctx, sourceSize * devicePixelRatio, colorPalette);
-
-const grid = generateGrid(source, sourceSize);
+const grid = new Grid(sourceSize);
 
 const canvasContainer = document.getElementById("canvas-container");
 if (canvasContainer === null) {
@@ -124,11 +128,11 @@ abstract class Renderer {
     resolution: () => [this.width, this.height],
     offset: () => [this.offsetX, this.offsetY],
     texture: regl.texture({
-      width: grid.width,
-      height: grid.width,
-      data: grid as unknown as HTMLCanvasElement,
+      width: grid.gridWidth,
+      height: grid.gridHeight,
+      data: grid.generate(source),
     }),
-    sourceSize: grid.width,
+    sourceSize: grid.gridWidth,
   };
 
   protected abstract vertexBuffer: [number, number][];
@@ -329,42 +333,94 @@ class RendererP3M1 extends Renderer {
   }
 }
 
-// class RendererP6M extends Renderer {
-//   private static tileWidth = 200 * Math.sqrt(3);
-//   private static tileHeight = 200;
+class RendererP6M extends Renderer {
+  private static tileWidth = 200 * Math.sqrt(3);
+  private static tileHeight = 300;
 
-//   protected vertexBuffer: [number, number][] = [
-//     [0, 0],
-//     [1, 0],
-//     [0, 1],
-//   ];
+  protected vertexBuffer: [number, number][] = [
+    [0, 0],
+    [1, 0],
+    [0, 1],
+  ];
 
-//   public draw = this.getDrawCommand();
+  public draw = this.getDrawCommand();
 
-//   protected generate(): Item[] {
-//     const s = 100;
-//     const w = s * sqrt3;
-//     const h = s;
-//     const size: [number, number] = [w, h];
-//     return [
-//       { position: [w, 500], size, angle: Math.PI },
-//       {
-//         position: [100, 200],
-//         size,
-//         angle: 0,
-//       },
-//       // { position: [0, h], size, flipX: true },
-//       // { position: [w, 0], size, flipY: true },
-//       // { position: [w, h], size, flipX: true, flipY: true },
-//     ];
-//   }
-// }
+  protected *generate(): Iterable<Item> {
+    const s = 100;
+    const w = s * sqrt3;
+    const h = s;
+    const size: [number, number] = [w, h];
+
+    const tileCountX = Math.ceil(this.width / RendererP6M.tileWidth) + 1;
+    const tileCountY = Math.ceil(this.height / RendererP6M.tileHeight) + 1;
+
+    for (let j = 0; j < tileCountY; j++) {
+      const y = j * RendererP6M.tileHeight;
+      for (let i = 0; i < tileCountX; i++) {
+        const offset = (j % 2) * w;
+        let x = i * RendererP6M.tileWidth - w - offset;
+
+        yield* [
+          { position: [x + w, y + 300], size, angle: Math.PI },
+          {
+            position: [x + 100 * sqrt3, y + 200],
+            size,
+            angle: (8 * Math.PI) / 6,
+            flipX: true,
+          },
+          {
+            position: [x + 2 * w, y + 300],
+            size,
+            angle: Math.PI,
+            flipY: true,
+          },
+          { position: [x + 1.5 * w, y + 150], size, angle: -Math.PI / 3 },
+          {
+            position: [x + 2 * w, y + 300],
+            size,
+            angle: (2 * Math.PI) / 3,
+            flipY: true,
+          },
+          {
+            position: [x + 2.5 * w, y + 150],
+            size,
+            angle: (-2 * Math.PI) / 3,
+          },
+          {
+            position: [x + 2 * w, y + 100],
+            size,
+            angle: Math.PI / 3,
+            flipX: true,
+          },
+          {
+            position: [x + 0.5 * w, y + 150],
+            size,
+            angle: (1 * Math.PI) / 3,
+          },
+          {
+            position: [x + w, y + 200],
+            size,
+            angle: (2 * Math.PI) / 3,
+            flipX: true,
+          },
+          {
+            position: [x + 1.5 * w, y + 150],
+            size,
+            angle: (2 * Math.PI) / 3,
+          },
+          { position: [x + 2 * w, y], size },
+          { position: [x + w, y], size, flipY: true },
+        ];
+      }
+    }
+  }
+}
 
 const renderers: Record<string, (width: number, height: number) => Renderer> = {
   pmm: (width: number, height: number) => new RendererPMM(width, height),
   p4m: (width: number, height: number) => new RendererP4M(width, height),
   p3m1: (width: number, height: number) => new RendererP3M1(width, height),
-  // p6m: (width: number, height: number) => new RendererP6M(width, height),
+  p6m: (width: number, height: number) => new RendererP6M(width, height),
 };
 
 const groupInputs = Array.from(
@@ -383,6 +439,15 @@ for (const input of groupInputs) {
     renderer = renderers[group](width, height);
   });
 }
+
+const randomImageButton = document.getElementById("random-image");
+randomImageButton?.addEventListener("click", () => {
+  const selectedGroupInput = groupInputs.find((input) => input.checked);
+  const group = selectedGroupInput?.value ?? "pmm";
+  generateRandomImage();
+  renderer?.destroy();
+  renderer = renderers[group](width, height);
+});
 
 function animate() {
   if (canvas === null) {
