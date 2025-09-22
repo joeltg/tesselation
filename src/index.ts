@@ -3,33 +3,48 @@ import REGL from "regl";
 import { generatePalette } from "./generatePalette.js";
 import { generateImage } from "./generateImage.js";
 import { Grid } from "./generateGrid.js";
+import { WanderingAnt } from "./animate.js";
 
 const sourceSize = 240;
 const sourceWidth = sourceSize * devicePixelRatio;
 const sourceHeight = sourceSize * devicePixelRatio;
 
-export const source = document.getElementById("source") as HTMLCanvasElement;
+const sourceContainer = document.getElementById("source-container");
+
+const source = document.getElementById("source") as HTMLCanvasElement;
 if (source === null) {
   throw new Error("missing source element");
 }
+
+class OffscreenSource {
+  canvas = new OffscreenCanvas(sourceWidth, sourceHeight);
+  constructor() {}
+
+  generate() {
+    const ctx = this.canvas.getContext("2d");
+    if (ctx === null) {
+      throw new Error("failed to get source drawing context");
+    }
+
+    const colorPalette = generatePalette();
+    generateImage(ctx, sourceWidth, sourceHeight, colorPalette);
+  }
+}
+
+const offscreenSource = new OffscreenSource();
+offscreenSource.generate();
 
 source.style.width = sourceSize + "px";
 source.style.height = sourceSize + "px";
 source.width = sourceWidth;
 source.height = sourceHeight;
 
-function generateRandomImage() {
-  const colorPalette = generatePalette();
-
-  const ctx = source.getContext("2d");
-  if (ctx === null) {
-    throw new Error("failed to get source drawing context");
-  }
-
-  generateImage(ctx, sourceSize * devicePixelRatio, colorPalette);
+const sourceCtx = source.getContext("2d");
+if (sourceCtx === null) {
+  throw new Error("failed to get source drawing context");
 }
 
-generateRandomImage();
+sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
 
 const grid = new Grid(sourceSize);
 
@@ -64,7 +79,7 @@ type Buffers = {
 };
 
 const vert = `
-precision mediump float;
+precision highp float;
 
 attribute vec2 vertex;
 attribute vec2 position;
@@ -90,7 +105,7 @@ void main() {
 }`;
 
 const frag = `
-precision mediump float;
+precision highp float;
 uniform sampler2D texture;
 varying vec2 uv;
 void main() {
@@ -126,19 +141,26 @@ abstract class Renderer {
   private buffers: Buffers;
   private uniforms = {
     resolution: () => [this.width, this.height],
-    offset: () => [this.offsetX, this.offsetY],
+    offset: () => {
+      return [this.offsetX, this.offsetY];
+    },
     texture: regl.texture({
       width: grid.gridWidth,
       height: grid.gridHeight,
-      data: grid.generate(source),
+      data: grid.generate(offscreenSource.canvas),
+      min: "linear",
+      mag: "linear",
+      // wrap: "repeat", // optional: for seamless scrolling
     }),
     sourceSize: grid.gridWidth,
   };
 
   protected abstract vertexBuffer: [number, number][];
 
+  public animate: boolean = true;
   public offsetX: number = Math.random() * sourceSize;
   public offsetY: number = Math.random() * sourceSize;
+
   public abstract draw: REGL.DrawCommand;
 
   constructor(
@@ -428,7 +450,7 @@ const groupInputs = Array.from(
 );
 
 const selectedGroupInput = groupInputs.find((input) => input.checked);
-const initialGroup = selectedGroupInput?.value ?? "pmm";
+const initialGroup = selectedGroupInput?.value ?? "p6m";
 
 let renderer = renderers[initialGroup](width, height);
 
@@ -443,11 +465,20 @@ for (const input of groupInputs) {
 const randomImageButton = document.getElementById("random-image");
 randomImageButton?.addEventListener("click", () => {
   const selectedGroupInput = groupInputs.find((input) => input.checked);
-  const group = selectedGroupInput?.value ?? "pmm";
-  generateRandomImage();
+  const group = selectedGroupInput?.value ?? "p6m";
+  offscreenSource.generate();
+  sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
   renderer?.destroy();
   renderer = renderers[group](width, height);
 });
+
+sourceCtx.lineWidth = 2;
+
+const ant = new WanderingAnt(0.999, 0.0002, 0.02);
+const v = 0.25;
+
+const rangeX = sourceWidth * 2;
+const rangeY = sourceHeight * 2;
 
 function animate() {
   if (canvas === null) {
@@ -465,13 +496,77 @@ function animate() {
     regl.poll();
   }
 
+  if (renderer.animate) {
+    const angle = ant.getAngle();
+    const dx = v * Math.cos(angle);
+    const dy = v * Math.sin(angle);
+
+    renderer.offsetX += dx;
+    renderer.offsetY += dy;
+    if (renderer.offsetX < 0) renderer.offsetX += rangeX;
+    if (renderer.offsetX > rangeX) renderer.offsetX -= rangeX;
+    if (renderer.offsetY < 0) renderer.offsetY += rangeY;
+    if (renderer.offsetY > rangeY) renderer.offsetY -= rangeY;
+  }
+
   regl.clear({ color: [1, 1, 1, 1] });
   renderer.draw();
+
+  if (sourceCtx !== null) {
+    sourceCtx.clearRect(0, 0, sourceWidth, sourceHeight);
+    sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
+
+    const isLeftSide = renderer.offsetX < sourceWidth;
+    const isTopSide = renderer.offsetY < sourceHeight;
+
+    const x = isLeftSide
+      ? renderer.offsetX
+      : 2 * sourceWidth - renderer.offsetX;
+
+    const y = isTopSide
+      ? renderer.offsetY
+      : 2 * sourceHeight - renderer.offsetY;
+
+    sourceCtx.beginPath();
+    sourceCtx.arc(x, y, 10, 0, 2 * Math.PI);
+    sourceCtx.stroke();
+
+    sourceCtx.beginPath();
+    if (isLeftSide && isTopSide) {
+      sourceCtx.arc(x, y, 10, 0, 2 * Math.PI);
+    } else if (isLeftSide) {
+      sourceCtx.arc(x, y, 10, Math.PI, 0);
+    } else if (isTopSide) {
+      sourceCtx.arc(x, y, 10, Math.PI / 2, (3 * Math.PI) / 2);
+    }
+    sourceCtx.fill();
+  }
+
   requestAnimationFrame(animate);
 }
 
 source.addEventListener("mousemove", (evt) => {
   renderer.setOffset(evt.offsetX, evt.offsetY);
+});
+
+source.addEventListener("mouseenter", (evt) => {
+  renderer.animate = false;
+});
+
+source.addEventListener("mouseleave", (evt) => {
+  renderer.animate = true;
+});
+
+window.addEventListener("keydown", (evt) => {
+  if (evt.key === "Escape") {
+    if (sourceContainer) {
+      if (sourceContainer.style.getPropertyValue("display") === "none") {
+        sourceContainer.style.setProperty("display", null);
+      } else {
+        sourceContainer.style.setProperty("display", "none");
+      }
+    }
+  }
 });
 
 animate();

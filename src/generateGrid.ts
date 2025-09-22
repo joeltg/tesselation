@@ -16,8 +16,8 @@ export class Grid {
   constructor(readonly size: number) {
     this.cellWidth = size * devicePixelRatio;
     this.cellHeight = size * devicePixelRatio;
-    this.gridWidth = this.cellWidth * 2;
-    this.gridHeight = this.cellHeight * 2;
+    this.gridWidth = this.cellWidth * 3;
+    this.gridHeight = this.cellHeight * 3;
     this.cell = new OffscreenCanvas(this.cellWidth, this.cellHeight);
     this.grid = new OffscreenCanvas(this.gridWidth, this.gridHeight);
   }
@@ -33,9 +33,9 @@ export class Grid {
       throw new Error("failed to get grid canvas context");
     }
 
-    for (let row = 0; row < 2; row++) {
+    for (let row = 0; row < 3; row++) {
       const flipVertical = row % 2 === 1;
-      for (let col = 0; col < 2; col++) {
+      for (let col = 0; col < 3; col++) {
         const flipHorizontal = col % 2 === 1;
 
         cellCtx.save();
