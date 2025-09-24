@@ -1,9 +1,11 @@
 import REGL from "regl";
 
-import { generatePalette } from "./generatePalette.js";
-import { generateImage } from "./generateImage.js";
+import { VoronoiGenerator } from "./generateImage.js";
 import { Grid } from "./generateGrid.js";
 import { WanderingAnt } from "./animate.js";
+import { frag, vert } from "./shaders.js";
+import { assert } from "./utils.js";
+import { drawImage } from "./drawImage.js";
 
 const sourceSize = 240;
 const sourceWidth = sourceSize * devicePixelRatio;
@@ -11,40 +13,21 @@ const sourceHeight = sourceSize * devicePixelRatio;
 
 const sourceContainer = document.getElementById("source-container");
 
-const source = document.getElementById("source") as HTMLCanvasElement;
-if (source === null) {
-  throw new Error("missing source element");
-}
+const preview = document.getElementById("preview");
+assert(preview instanceof HTMLCanvasElement, "missing #preview element");
 
-class OffscreenSource {
-  canvas = new OffscreenCanvas(sourceWidth, sourceHeight);
-  constructor() {}
+const generator = new VoronoiGenerator(sourceWidth, sourceHeight);
+generator.generate(1n);
 
-  generate() {
-    const ctx = this.canvas.getContext("2d");
-    if (ctx === null) {
-      throw new Error("failed to get source drawing context");
-    }
+preview.style.width = sourceSize + "px";
+preview.style.height = sourceSize + "px";
+preview.width = sourceWidth;
+preview.height = sourceHeight;
 
-    const colorPalette = generatePalette();
-    generateImage(ctx, sourceWidth, sourceHeight, colorPalette);
-  }
-}
+const previewCtx = preview.getContext("2d");
+assert(previewCtx !== null, "failed to get preview drawing context");
 
-const offscreenSource = new OffscreenSource();
-offscreenSource.generate();
-
-source.style.width = sourceSize + "px";
-source.style.height = sourceSize + "px";
-source.width = sourceWidth;
-source.height = sourceHeight;
-
-const sourceCtx = source.getContext("2d");
-if (sourceCtx === null) {
-  throw new Error("failed to get source drawing context");
-}
-
-sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
+previewCtx.drawImage(generator.canvas, 0, 0);
 
 const grid = new Grid(sourceSize);
 
@@ -78,40 +61,6 @@ type Buffers = {
   angle: REGL.Buffer;
 };
 
-const vert = `
-precision highp float;
-
-attribute vec2 vertex;
-attribute vec2 position;
-attribute vec2 size;
-attribute vec2 flip;
-attribute float angle;
-
-uniform float sourceSize;
-uniform vec2 resolution;
-uniform vec2 offset;
-varying vec2 uv;
-
-void main() {
-  vec2 p = size * vertex;
-  vec2 f = mix(p, size - p, flip);
-  vec2 v = vec2(
-    cos(angle) * f.x + sin(angle) * f.y,
-    -sin(angle) * f.x + cos(angle) * f.y
-  );
-  uv = (p + offset) / sourceSize;
-  vec2 clipPos = ((v + position) / resolution) * 2.0 - 1.0;
-  gl_Position = vec4(clipPos.x, -clipPos.y, 0, 1);
-}`;
-
-const frag = `
-precision highp float;
-uniform sampler2D texture;
-varying vec2 uv;
-void main() {
-  gl_FragColor = texture2D(texture, uv);
-}`;
-
 abstract class Renderer {
   protected static triangleVertexBuffer: [number, number][] = [
     [0.5, 0],
@@ -139,6 +88,7 @@ abstract class Renderer {
 
   private data: Item[];
   private buffers: Buffers;
+
   private uniforms = {
     resolution: () => [this.width, this.height],
     offset: () => {
@@ -147,7 +97,7 @@ abstract class Renderer {
     texture: regl.texture({
       width: grid.gridWidth,
       height: grid.gridHeight,
-      data: grid.generate(offscreenSource.canvas),
+      data: grid.generate(this.source),
       min: "linear",
       mag: "linear",
       // wrap: "repeat", // optional: for seamless scrolling
@@ -166,6 +116,7 @@ abstract class Renderer {
   constructor(
     public width: number,
     public height: number,
+    public source: CanvasImageSource,
   ) {
     this.data = Array.from(this.generate());
     this.buffers = Renderer.createBuffers(this.data);
@@ -191,8 +142,8 @@ abstract class Renderer {
 
   protected getDrawCommand(): REGL.DrawCommand {
     return regl({
-      vert,
-      frag,
+      vert: vert,
+      frag: frag,
       attributes: {
         position: { buffer: this.buffers.position, divisor: 1 },
         size: { buffer: this.buffers.size, divisor: 1 },
@@ -438,11 +389,17 @@ class RendererP6M extends Renderer {
   }
 }
 
-const renderers: Record<string, (width: number, height: number) => Renderer> = {
-  pmm: (width: number, height: number) => new RendererPMM(width, height),
-  p4m: (width: number, height: number) => new RendererP4M(width, height),
-  p3m1: (width: number, height: number) => new RendererP3M1(width, height),
-  p6m: (width: number, height: number) => new RendererP6M(width, height),
+type RendererFactory = (
+  width: number,
+  height: number,
+  source: CanvasImageSource,
+) => Renderer;
+
+const renderers: Record<string, RendererFactory> = {
+  pmm: (width, height, source) => new RendererPMM(width, height, source),
+  p4m: (width, height, source) => new RendererP4M(width, height, source),
+  p3m1: (width, height, source) => new RendererP3M1(width, height, source),
+  p6m: (width, height, source) => new RendererP6M(width, height, source),
 };
 
 const groupInputs = Array.from(
@@ -450,35 +407,51 @@ const groupInputs = Array.from(
 );
 
 const selectedGroupInput = groupInputs.find((input) => input.checked);
-const initialGroup = selectedGroupInput?.value ?? "p6m";
 
-let renderer = renderers[initialGroup](width, height);
+let group = selectedGroupInput?.value ?? "p6m";
+let renderer = renderers[group](width, height, generator.canvas);
 
 for (const input of groupInputs) {
   input.addEventListener("change", () => {
-    const group = input.value;
+    group = input.value;
     renderer?.destroy();
-    renderer = renderers[group](width, height);
+    renderer = renderers[group](width, height, renderer.source);
   });
 }
 
-const randomImageButton = document.getElementById("random-image");
-randomImageButton?.addEventListener("click", () => {
-  const selectedGroupInput = groupInputs.find((input) => input.checked);
-  const group = selectedGroupInput?.value ?? "p6m";
-  offscreenSource.generate();
-  sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
+const randomImage = document.getElementById("random-image");
+randomImage?.addEventListener("click", () => {
+  const seed = BigInt(Math.round(Math.random() * 0xffffffff));
+  generator.generate(seed);
+  previewCtx.drawImage(generator.canvas, 0, 0);
   renderer?.destroy();
-  renderer = renderers[group](width, height);
+  renderer = renderers[group](width, height, generator.canvas);
 });
 
-sourceCtx.lineWidth = 2;
+const selectImage = document.getElementById("select-image");
+assert(selectImage instanceof HTMLInputElement, "#select-image not found");
+selectImage.addEventListener("change", () => {
+  if (selectImage.files !== null) {
+    const [file] = selectImage.files;
+    console.log(file);
+    // Create image bitmap from file (modern, performant approach)
+    createImageBitmap(file).then((imageBitmap) => {
+      const canvas = new OffscreenCanvas(sourceWidth, sourceHeight);
+      drawImage(imageBitmap, canvas);
+
+      renderer?.destroy();
+      renderer = renderers[group](width, height, canvas);
+    });
+  }
+});
 
 const ant = new WanderingAnt(0.999, 0.0002, 0.02);
-const v = 0.25;
+const v = 0.2;
 
 const rangeX = sourceWidth * 2;
 const rangeY = sourceHeight * 2;
+
+previewCtx.lineWidth = 2;
 
 function animate() {
   if (canvas === null) {
@@ -512,9 +485,9 @@ function animate() {
   regl.clear({ color: [1, 1, 1, 1] });
   renderer.draw();
 
-  if (sourceCtx !== null) {
-    sourceCtx.clearRect(0, 0, sourceWidth, sourceHeight);
-    sourceCtx.drawImage(offscreenSource.canvas, 0, 0);
+  if (previewCtx !== null) {
+    previewCtx.clearRect(0, 0, sourceWidth, sourceHeight);
+    previewCtx.drawImage(renderer.source, 0, 0);
 
     const isLeftSide = renderer.offsetX < sourceWidth;
     const isTopSide = renderer.offsetY < sourceHeight;
@@ -527,33 +500,33 @@ function animate() {
       ? renderer.offsetY
       : 2 * sourceHeight - renderer.offsetY;
 
-    sourceCtx.beginPath();
-    sourceCtx.arc(x, y, 10, 0, 2 * Math.PI);
-    sourceCtx.stroke();
+    previewCtx.beginPath();
+    previewCtx.arc(x, y, 10, 0, 2 * Math.PI);
+    previewCtx.stroke();
 
-    sourceCtx.beginPath();
+    previewCtx.beginPath();
     if (isLeftSide && isTopSide) {
-      sourceCtx.arc(x, y, 10, 0, 2 * Math.PI);
+      previewCtx.arc(x, y, 10, 0, 2 * Math.PI);
     } else if (isLeftSide) {
-      sourceCtx.arc(x, y, 10, Math.PI, 0);
+      previewCtx.arc(x, y, 10, Math.PI, 0);
     } else if (isTopSide) {
-      sourceCtx.arc(x, y, 10, Math.PI / 2, (3 * Math.PI) / 2);
+      previewCtx.arc(x, y, 10, Math.PI / 2, (3 * Math.PI) / 2);
     }
-    sourceCtx.fill();
+    previewCtx.fill();
   }
 
   requestAnimationFrame(animate);
 }
 
-source.addEventListener("mousemove", (evt) => {
+preview.addEventListener("mousemove", (evt) => {
   renderer.setOffset(evt.offsetX, evt.offsetY);
 });
 
-source.addEventListener("mouseenter", (evt) => {
+preview.addEventListener("mouseenter", (evt) => {
   renderer.animate = false;
 });
 
-source.addEventListener("mouseleave", (evt) => {
+preview.addEventListener("mouseleave", (evt) => {
   renderer.animate = true;
 });
 

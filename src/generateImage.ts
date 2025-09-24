@@ -1,20 +1,48 @@
 import { Delaunay } from "d3-delaunay";
+import PRNG from "xoshiro-js";
+
+import { generatePalette } from "./generatePalette.js";
+
+export class VoronoiGenerator {
+  canvas = new OffscreenCanvas(this.width, this.height);
+  constructor(
+    readonly width: number,
+    readonly height: number,
+  ) {}
+
+  generate(seed: bigint, palette?: string[]) {
+    const ctx = this.canvas.getContext("2d");
+    if (ctx === null) {
+      throw new Error("failed to get source drawing context");
+    }
+
+    const prng = new PRNG(seed);
+    const paletteSeed = prng.getBigUint64();
+    const colorPalette = palette ?? generatePalette(paletteSeed);
+    generateImage(ctx, this.width, this.height, colorPalette, prng);
+  }
+}
 
 export function generateImage(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   width: number,
   height: number,
   colorPalette: string[],
+  prng: PRNG | bigint = 0n,
 ) {
+  if (typeof prng === "bigint") {
+    prng = new PRNG(prng);
+  }
+
   ctx.clearRect(0, 0, width, height);
 
   const margin = 2;
   const points: [number, number][] = [];
 
-  const numPoints = 30 + Math.round(Math.random() * 20);
+  const numPoints = 50;
   for (let i = 0; i < numPoints; i++) {
-    const x = margin + Math.round(Math.random() * (width - margin * 2));
-    const y = margin + Math.round(Math.random() * (height - margin * 2));
+    const x = prng.range(margin, width - margin);
+    const y = prng.range(margin, height - margin);
     points.push([x, y]);
   }
 
@@ -39,8 +67,6 @@ export function generateImage(
 
   ctx.strokeStyle = "#404040";
   ctx.lineWidth = 1;
-
-  const e = 1;
 
   for (let i = 0; i < points.length; i++) {
     const cell = voronoi.cellPolygon(i);

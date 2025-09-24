@@ -1,32 +1,29 @@
 import { Hsluv } from "hsluv";
+import PRNG from "xoshiro-js";
 
 const hsluv = new Hsluv();
 
-export function generatePalette() {
-  const baseHue = Math.floor(Math.random() * 360);
+export function generatePalette(prng: PRNG | bigint = 0n) {
+  if (typeof prng === "bigint") {
+    prng = new PRNG(prng);
+  }
+
+  const baseHue = prng.range(0, 360 - 1);
   const baseLightness = 30;
 
   const saturation = 30;
 
-  const accentHue1 = baseHue + 20 + Math.random() * 20;
-  const accentHue2 = baseHue - 20 - Math.random() * 20;
+  const accentHue1 = baseHue + prng.range(20, 40);
+  const accentHue2 = baseHue - prng.range(20, 40) + 360;
   return [
     hslToRgb(baseHue, saturation, baseLightness),
-    hslToRgb(
-      accentHue1 % 360,
-      saturation,
-      baseLightness + 20 + Math.random() * 40,
-    ),
-    hslToRgb(
-      (accentHue2 + 360) % 360,
-      saturation,
-      baseLightness + 20 + Math.random() * 40,
-    ),
+    hslToRgb(accentHue1, saturation, baseLightness + prng.range(20, 60)),
+    hslToRgb(accentHue2, saturation, baseLightness + prng.range(20, 60)),
   ];
 }
 
 function hslToRgb(h: number, s: number, l: number) {
-  hsluv.hsluv_h = h;
+  hsluv.hsluv_h = h % 360;
   hsluv.hsluv_s = s;
   hsluv.hsluv_l = l;
   hsluv.hsluvToRgb();

@@ -15,7 +15,8 @@
     "@types/d3-delaunay": "^6.0.4",
     "d3-delaunay": "^6.0.4",
     "hsluv": "^1.0.1",
-    "regl": "^2.1.1"
+    "regl": "^2.1.1",
+    "xoshiro-js": "^0.3.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
