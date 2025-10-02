@@ -2,7 +2,7 @@ import { assert } from "./utils.js";
 
 export async function drawImage(
   imageBitmap: ImageBitmap,
-  canvas: HTMLCanvasElement | OffscreenCanvas,
+  canvas: OffscreenCanvas,
 ) {
   const ctx = canvas.getContext("2d");
   assert(ctx !== null, "failed to get canvas canvas");

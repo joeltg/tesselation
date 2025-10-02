@@ -17,7 +17,7 @@ const preview = document.getElementById("preview");
 assert(preview instanceof HTMLCanvasElement, "missing #preview element");
 
 const generator = new VoronoiGenerator(sourceWidth, sourceHeight);
-generator.generate(1n);
+generator.generate(BigInt(Math.round(Math.random() * 0xffffffff)));
 
 preview.style.width = sourceSize + "px";
 preview.style.height = sourceSize + "px";
